@@ -54,7 +54,7 @@ struct Time {
 template<class X, class Y>
 struct Sample {
   X x;
-  Y y;  
+  Y y;
 };
 
 struct TemperatureSample : public Sample<Time, Temperature> {
@@ -64,13 +64,13 @@ struct TemperatureSample : public Sample<Time, Temperature> {
 
 template<size_t N, class T>
 class History {
-  
+
   T buffer[N];
 
 public:
   constexpr static size_t Size = N;
   size_t current = 0;
-  
+
   void append(T t) {
     const auto at_end = current == Size - 1;
     auto next = at_end
@@ -94,9 +94,19 @@ public:
   void for_each(F f, int stride = -5) const {
     int end = static_cast<int>(Size);
     if (stride < 0) end = -end;
-    for (int i = 0; i != end; i += stride) {      
+    for (int i = 0; i != end; i += stride) {
       f(buffer[wrap(current + i)], i);
     }
+  }
+  T most_recent() const {
+    return buffer[current];
+  }
+  template<typename F, typename R>
+  R reduce(F f, R acc) const {
+    for_each([&](T s, int){
+      acc = f(acc, s);
+    }, 1);
+    return acc;
   }
 };
 
@@ -115,6 +125,12 @@ public:
     lcd.begin(16, 2);
   }
 
+
+  template<typename T>
+  void stream(T t) {
+    lcd.print(t);
+  }
+
   void stream_scalar(const float t, const char unit) {
     int whole = (int)t;
     int fraction = (int)((t-whole)*100);
@@ -124,24 +140,39 @@ public:
     lcd.print(unit);
   }
 
+  void stream(Time t) {
+    stream<long>(t.ticks / 1000);
+    stream(":");
+  }
+
+  void stream(const Temperature t) {
+    stream_scalar(t.celcius, 'C');
+  }
   void stream(const TemperatureSample t) {
-    stream_scalar(t.time().ticks / 1000, 't');
-    lcd.print(":");
-    stream_scalar(t.temperature().celcius, 'C');
+    stream(t.temperature());
   }
 
   template<class Hist>
   Time update_temperatures(const Hist history) {
     Time time{0};
-    history.for_each([&](TemperatureSample t, int){
-      lcd.noDisplay();
-      lcd.clear();
-      
-      stream(t);
-      lcd.display();
-      delay(500);
-      time.ticks += 500;
-    });
+
+    auto avg = Temperature{
+      history.reduce([](float acc, TemperatureSample s){
+        return acc + s.y.celcius;
+      }, 0.0) / Hist::Size
+    };
+    lcd.clear();
+    stream("|");
+    stream(avg);
+    stream("| ");
+
+    stream(history.most_recent());
+
+    // stream(" ~");
+    // stream(range);
+
+    delay(1000);
+    time.ticks += 1000;
     return time;
   }
 } ui;
@@ -167,7 +198,7 @@ class Thermistor {
     constexpr auto BCOEFFICIENT = 3950;
     constexpr Resistance THERMISTORNOMINAL = {10e3};
     constexpr Temperature TEMPERATURENOMINAL = {25.0};
-  
+
     float steinhart;
     steinhart = r.ohm / THERMISTORNOMINAL.ohm;     // (R/Ro)
     steinhart = log(steinhart);                  // ln(R/Ro)
@@ -175,7 +206,7 @@ class Thermistor {
     steinhart += 1.0 / (TEMPERATURENOMINAL.celcius + 273.15); // + (1/To)
     steinhart = 1.0 / steinhart;                 // Invert
     steinhart -= 273.15;                         // convert absolute temp to C
-  
+
     return {steinhart};
   }
 
@@ -212,7 +243,7 @@ void read_temp_task() {
 
 void loop() {
   read_temp_task();
-
-  delay(2000);
-  time.ticks += 2000;
+  constexpr auto step = 2000;
+  delay(step);
+  time.ticks += step;
 }
