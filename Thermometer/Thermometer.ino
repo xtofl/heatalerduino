@@ -47,15 +47,31 @@ struct Temperature {
   float celcius;
 };
 
-template<size_t Size>
+struct Time {
+  int64_t ticks;
+};
+
+template<class X, class Y>
+struct Sample {
+  X x;
+  Y y;  
+};
+
+struct TemperatureSample : public Sample<Time, Temperature> {
+  Time time() const { return x; }
+  Temperature temperature() const { return y; }
+};
+
+template<size_t N, class T>
 class History {
   
-  Temperature buffer[Size] = {1};
+  T buffer[N];
 
 public:
+  constexpr static size_t Size = N;
   size_t current = 0;
   
-  void append(Temperature t) {
+  void append(T t) {
     const auto at_end = current == Size - 1;
     auto next = at_end
       ? 0
@@ -108,38 +124,25 @@ public:
     lcd.print(unit);
   }
 
-  void stream(const Temperature t) {
-    stream_scalar(t.celcius, 'C');
+  void stream(const TemperatureSample t) {
+    stream_scalar(t.time().ticks / 1000, 't');
+    lcd.print(":");
+    stream_scalar(t.temperature().celcius, 'C');
   }
 
-  void stream_filled_negative(int i) {
-    if (i > -10) {
-      lcd.print("-0");
-      lcd.print(-i);
-    } else if (i > -100 ){
-      lcd.print(i);
-    } else {
-      lcd.print(i);
-    }
-  }
-  void stream(const int i, const int N) {
-    stream_filled_negative(i);
-    lcd.print("/");
-    lcd.print(N);
-  }
-
-  template<size_t N>
-  void update_temperatures(const History<N> history) {
-    history.for_each([&](Temperature t, int i){
+  template<class Hist>
+  Time update_temperatures(const Hist history) {
+    Time time{0};
+    history.for_each([&](TemperatureSample t, int){
       lcd.noDisplay();
       lcd.clear();
       
-      stream(i, N);
-      lcd.print(": ");
       stream(t);
       lcd.display();
       delay(500);
+      time.ticks += 500;
     });
+    return time;
   }
 } ui;
 
@@ -187,21 +190,29 @@ public:
   }
 } thermistor;
 
-History<50> history;
+History<50, TemperatureSample> history;
 
 void setup() {
-  auto current_temp = thermistor.read_temp();
-  for(int i = 0; i != 50; ++i) history.append(current_temp);
+  //auto current_temp = thermistor.read_temp();
+  //for(int i = 0; i != 50; ++i) history.append(TemperatureSample{{current_temp}, {0}});
 }
 
 
+Time time{1};
 
 void read_temp_task() {
-  history.append(thermistor.read_temp());
-  ui.update_temperatures(history);
+  Temperature current_temp = thermistor.read_temp();
+  TemperatureSample s;
+  s.x = time;
+  s.y = current_temp;
+  history.append(s);
+
+  time.ticks += ui.update_temperatures(history).ticks;
 }
 
 void loop() {
   read_temp_task();
+
   delay(2000);
+  time.ticks += 2000;
 }
