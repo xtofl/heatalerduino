@@ -43,76 +43,165 @@
 #include <LiquidCrystal.h>
 #include <Arduino.h>
 
-// initialize the library by associating any needed LCD interface pin
-// with the arduino pin number it is connected to
-const int rs = 12, en = 11;
-const int d4 = 2, d5 = 3, d6 = 4, d7 = 5;
-LiquidCrystal lcd(rs, en, d4, d5, d6, d7);
+struct Temperature {
+  float celcius;
+};
 
-const int PIN_V2 = A1;
+template<size_t Size>
+class History {
+  
+  Temperature buffer[Size] = {1};
+
+public:
+  size_t current = 0;
+  
+  void append(Temperature t) {
+    const auto at_end = current == Size - 1;
+    auto next = at_end
+      ? 0
+      : current + 1;
+    buffer[next] = t;
+    current = next;
+  }
+
+  size_t wrap(int index) const {
+    if(index < 0) {
+      return index + Size;
+    }
+    if(index >= static_cast<int>(Size)) {
+      return index - Size;
+    }
+    return index;
+  }
+
+  template<typename F>
+  void for_each(F f, int stride = -5) const {
+    int end = static_cast<int>(Size);
+    if (stride < 0) end = -end;
+    for (int i = 0; i != end; i += stride) {      
+      f(buffer[wrap(current + i)], i);
+    }
+  }
+};
+
+class UI {
+  // initialize the library by associating any needed LCD interface pin
+  // with the arduino pin number it is connected to
+  const int rs = 12, en = 11;
+  const int d4 = 2, d5 = 3, d6 = 4, d7 = 5;
+
+  LiquidCrystal lcd;
+
+public:
+  UI(): lcd(rs, en, d4, d5, d6, d7)
+  {
+    // set up the LCD's number of columns and rows:
+    lcd.begin(16, 2);
+  }
+
+  void stream_scalar(const float t, const char unit) {
+    int whole = (int)t;
+    int fraction = (int)((t-whole)*100);
+    lcd.print(whole, DEC);
+    lcd.print('.');
+    lcd.print(fraction, DEC);
+    lcd.print(unit);
+  }
+
+  void stream(const Temperature t) {
+    stream_scalar(t.celcius, 'C');
+  }
+
+  void stream_filled_negative(int i) {
+    if (i > -10) {
+      lcd.print("-0");
+      lcd.print(-i);
+    } else if (i > -100 ){
+      lcd.print(i);
+    } else {
+      lcd.print(i);
+    }
+  }
+  void stream(const int i, const int N) {
+    stream_filled_negative(i);
+    lcd.print("/");
+    lcd.print(N);
+  }
+
+  template<size_t N>
+  void update_temperatures(const History<N> history) {
+    history.for_each([&](Temperature t, int i){
+      lcd.noDisplay();
+      lcd.clear();
+      
+      stream(i, N);
+      lcd.print(": ");
+      stream(t);
+      lcd.display();
+      delay(500);
+    });
+  }
+} ui;
+
+class Thermistor {
+  static constexpr int PIN_V2 = A1;
+
+  struct Resistance {
+    float ohm;
+  };
+  Resistance read_R2() {
+    const float R1 = 10e3;
+    const float V = 1023.0;
+    const auto V2 = analogRead(PIN_V2);
+    const float R2 = R1 * (V2 / (V-V2) );
+    return {R2};
+  }
+
+  static Temperature thermistor_r_to_t(Resistance r) {
+  // The beta coefficient of the thermistor (usually 3000-4000)
+  // https://learn.adafruit.com/thermistor/using-a-thermistor
+  // values from https://cdn-shop.adafruit.com/datasheets/103_3950_lookuptable.pdf
+    constexpr auto BCOEFFICIENT = 3950;
+    constexpr Resistance THERMISTORNOMINAL = {10e3};
+    constexpr Temperature TEMPERATURENOMINAL = {25.0};
+  
+    float steinhart;
+    steinhart = r.ohm / THERMISTORNOMINAL.ohm;     // (R/Ro)
+    steinhart = log(steinhart);                  // ln(R/Ro)
+    steinhart /= BCOEFFICIENT;                   // 1/B * ln(R/Ro)
+    steinhart += 1.0 / (TEMPERATURENOMINAL.celcius + 273.15); // + (1/To)
+    steinhart = 1.0 / steinhart;                 // Invert
+    steinhart -= 273.15;                         // convert absolute temp to C
+  
+    return {steinhart};
+  }
+
+public:
+  Thermistor(){
+    pinMode(PIN_V2, INPUT);
+  }
+  Temperature read_temp() {
+    const auto r2 = read_R2();
+    const auto t = thermistor_r_to_t(r2);
+    return t;
+  }
+} thermistor;
+
+History<50> history;
 
 void setup() {
-  // set up the LCD's number of columns and rows:
-  lcd.begin(16, 2);
-  pinMode(PIN_V2, INPUT);
+  auto current_temp = thermistor.read_temp();
+  for(int i = 0; i != 50; ++i) history.append(current_temp);
 }
 
-void print_scalar(const float t, const char unit) {
-  int whole = (int)t;
-  int fraction = (int)((t-whole)*100);
-  lcd.print(whole, DEC);
-  lcd.print('.');
-  lcd.print(fraction, DEC);
-  lcd.print(unit);
-}
-
-void print_temp(const float t) {
-  print_scalar(t, 'C');
-}
-
-float read_R2() {
-  const float R1 = 10e3;
-  const float V = 1023.0;
-  const auto V2 = analogRead(PIN_V2);
-  const float R2 = R1 * (V2 / (V-V2) );
-  return R2;
-}
-
-float thermistor_r_to_t(float r) {
-// The beta coefficient of the thermistor (usually 3000-4000)
-// https://learn.adafruit.com/thermistor/using-a-thermistor
-// values from https://cdn-shop.adafruit.com/datasheets/103_3950_lookuptable.pdf
-  constexpr auto BCOEFFICIENT = 3950;
-  constexpr auto THERMISTORNOMINAL = 10e3;
-  constexpr auto TEMPERATURENOMINAL = 25.0;
-
-  float steinhart;
-  steinhart = r / THERMISTORNOMINAL;     // (R/Ro)
-  steinhart = log(steinhart);                  // ln(R/Ro)
-  steinhart /= BCOEFFICIENT;                   // 1/B * ln(R/Ro)
-  steinhart += 1.0 / (TEMPERATURENOMINAL + 273.15); // + (1/To)
-  steinhart = 1.0 / steinhart;                 // Invert
-  steinhart -= 273.15;                         // convert absolute temp to C
-    
-  return steinhart;
-}
-
-float read_temp() {
-  const auto r2 = read_R2();
-  const auto t = thermistor_r_to_t(r2);
-  return t;
-}
 
 
 void read_temp_task() {
-  auto temp = read_temp();
-  print_scalar(temp, 'C');
+  history.append(thermistor.read_temp());
+  ui.update_temperatures(history);
 }
 
 void loop() {
-  lcd.noDisplay();
-  lcd.clear();
   read_temp_task();
-  lcd.display();
-  delay(500);
+  delay(2000);
 }
