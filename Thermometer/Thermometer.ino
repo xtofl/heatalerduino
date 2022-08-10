@@ -180,18 +180,31 @@ public:
     // stream(range);
     return time;
   }
-} ui;
+};
+
+
 
 class Thermistor {
-  static constexpr int PIN_V2 = A1;
+  const int pin_v2;
 
+public:
+  Thermistor(int pin_v2): pin_v2{pin_v2} {
+    pinMode(pin_v2, INPUT);
+  }
+  Temperature read_temp() {
+    const auto r2 = read_R2();
+    const auto t = thermistor_r_to_t(r2);
+    return t;
+  }
+
+private:
   struct Resistance {
     float ohm;
   };
   Resistance read_R2() {
     const float R1 = 10e3;
     const float V = 1023.0;
-    const auto V2 = analogRead(PIN_V2);
+    const auto V2 = analogRead(pin_v2);
     const float R2 = R1 * (V2 / (V-V2) );
     return {R2};
   }
@@ -215,18 +228,30 @@ class Thermistor {
     return {steinhart};
   }
 
-public:
-  Thermistor(){
-    pinMode(PIN_V2, INPUT);
-  }
-  Temperature read_temp() {
-    const auto r2 = read_R2();
-    const auto t = thermistor_r_to_t(r2);
-    return t;
-  }
-} thermistor;
+};
 
-History<50, TemperatureSample> history;
+class Thermometer {
+public:
+  Thermistor thermistor {A1};
+  History<50, TemperatureSample> history;
+  Time elapsed_time{0};
+  UI ui;
+
+  void update_temperature() {
+    Temperature current_temp = thermistor.read_temp();
+    TemperatureSample s;
+    s.x = elapsed_time;
+    s.y = current_temp;
+    history.append(s);
+
+    elapsed_time.ticks += ui.update_temperatures(history).ticks;
+  }
+  void add_delay(Time d) {
+    elapsed_time.ticks += d.ticks;
+  }
+};
+
+Thermometer thermometer;
 
 void setup() {
   //auto current_temp = thermistor.read_temp();
@@ -234,21 +259,10 @@ void setup() {
 }
 
 
-Time time{1};
-
-void read_temp_task() {
-  Temperature current_temp = thermistor.read_temp();
-  TemperatureSample s;
-  s.x = time;
-  s.y = current_temp;
-  history.append(s);
-
-  time.ticks += ui.update_temperatures(history).ticks;
-}
 
 void loop() {
-  read_temp_task();
-  constexpr auto step = 2000;
-  delay(step);
-  time.ticks += step;
+  thermometer.update_temperature();
+  constexpr auto step = Time{5000};
+  delay(step.ticks);
+  thermometer.add_delay(step);
 }
