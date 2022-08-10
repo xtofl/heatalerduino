@@ -162,17 +162,22 @@ public:
       }, 0.0) / Hist::Size
     };
     lcd.clear();
+    const auto current = history.most_recent();
+    stream(current);
+    if (current.temperature().celcius > avg.celcius + 0.2) {
+      stream(">");
+    }
+    else if (current.temperature().celcius < avg.celcius - 0.2) {
+      stream("<");
+    } else {
+      stream("=");
+    }
     stream("|");
     stream(avg);
-    stream("| ");
-
-    stream(history.most_recent());
+    stream("|");
 
     // stream(" ~");
     // stream(range);
-
-    delay(1000);
-    time.ticks += 1000;
     return time;
   }
 } ui;
