@@ -148,9 +148,6 @@ public:
   void stream(const Temperature t) {
     stream_scalar(t.celcius, 'C');
   }
-  void stream(const TemperatureSample t) {
-    stream(t.temperature());
-  }
 
   template<class Hist>
   Time update_temperatures(const Hist history) {
@@ -162,12 +159,12 @@ public:
       }, 0.0) / Hist::Size
     };
     lcd.clear();
-    const auto current = history.most_recent();
+    const auto current = history.most_recent().temperature();
     stream(current);
-    if (current.temperature().celcius > avg.celcius + 0.2) {
+    if (current.celcius > avg.celcius + 0.2) {
       stream(">");
     }
-    else if (current.temperature().celcius < avg.celcius - 0.2) {
+    else if (current.celcius < avg.celcius - 0.2) {
       stream("<");
     } else {
       stream("=");
