@@ -50,6 +50,13 @@ struct Temperature {
 struct Time {
   int64_t ticks;
 };
+constexpr Time one_second  = {1000};
+constexpr Time operator-(const Time lhs, const Time other) { return {lhs.ticks - other.ticks}; }
+constexpr float operator/(const Time lhs, const Time other) { return (float)lhs.ticks/other.ticks; }
+constexpr Time operator*(const Time lhs, const float f) { return Time{static_cast<float>(lhs.ticks*f)}; }
+constexpr float minutes(const Time lhs) {
+  return lhs/one_second/60;
+}
 
 template<class X, class Y>
 struct Sample {
@@ -69,6 +76,7 @@ class History {
 
 public:
   constexpr static size_t Size = N;
+  size_t count = 0;
   size_t current = 0;
 
   void append(T t) {
@@ -78,6 +86,7 @@ public:
       : current + 1;
     buffer[next] = t;
     current = next;
+    if (count < Size) ++count;
   }
 
   size_t wrap(int index) const {
@@ -92,7 +101,7 @@ public:
 
   template<typename F>
   void for_each(F f, int stride = -5) const {
-    int end = static_cast<int>(Size);
+    int end = static_cast<int>(count);
     if (stride < 0) end = -end;
     for (int i = 0; i != end; i += stride) {
       f(buffer[wrap(current + i)], i);
@@ -108,6 +117,9 @@ public:
     }, 1);
     return acc;
   }
+  T oldest() const {
+    return buffer[wrap(current-count+1)];
+  }
 };
 
 class UI {
@@ -117,6 +129,10 @@ class UI {
   const int d4 = 2, d5 = 3, d6 = 4, d7 = 5;
 
   LiquidCrystal lcd;
+  struct Row {
+    int value;
+    operator int () const { return value; }
+  };
 
 public:
   UI(): lcd(rs, en, d4, d5, d6, d7)
@@ -125,18 +141,13 @@ public:
     lcd.begin(16, 2);
   }
 
-
   template<typename T>
   void stream(T t) {
     lcd.print(t);
   }
 
   void stream_scalar(const float t, const char unit) {
-    int whole = (int)t;
-    int fraction = (int)((t-whole)*100);
-    lcd.print(whole, DEC);
-    lcd.print('.');
-    lcd.print(fraction, DEC);
+    lcd.print(t, 2);
     lcd.print(unit);
   }
 
@@ -149,6 +160,10 @@ public:
     stream_scalar(t.celcius, 'C');
   }
 
+  void setCursor(Row r){
+    lcd.setCursor(0, r.value);
+  }
+
   template<class Hist>
   Time update_temperatures(const Hist history) {
     Time time{0};
@@ -159,27 +174,32 @@ public:
       }, 0.0) / Hist::Size
     };
     lcd.clear();
+    setCursor(Row{0});
     const auto current = history.most_recent().temperature();
     stream(current);
-    if (current.celcius > avg.celcius + 0.2) {
-      stream(">");
-    }
-    else if (current.celcius < avg.celcius - 0.2) {
-      stream("<");
-    } else {
-      stream("=");
-    }
+      if (current.celcius > avg.celcius + 0.2) {
+        stream(">");
+      }
+      else if (current.celcius < avg.celcius - 0.2) {
+        stream("<");
+      } else {
+        stream("=");
+      }
     stream("|");
     stream(avg);
     stream("|");
+    setCursor(Row{1});
+
+    auto t0 = history.oldest().x;
+    auto t1 = history.most_recent().x;
+    stream(static_cast<float>(minutes(t1-t0))) ;
+    stream('\'');
 
     // stream(" ~");
     // stream(range);
     return time;
   }
 };
-
-
 
 class Thermistor {
   const int pin_v2;
@@ -224,8 +244,8 @@ private:
 
     return {steinhart};
   }
-
 };
+
 
 class Thermometer {
 public:
@@ -236,6 +256,7 @@ public:
 
   void update_temperature() {
     Temperature current_temp = thermistor.read_temp();
+
     TemperatureSample s;
     s.x = elapsed_time;
     s.y = current_temp;
@@ -255,11 +276,9 @@ void setup() {
   //for(int i = 0; i != 50; ++i) history.append(TemperatureSample{{current_temp}, {0}});
 }
 
-
-
 void loop() {
   thermometer.update_temperature();
-  constexpr auto step = Time{5000};
+  constexpr auto step = one_second * 10;
   delay(step.ticks);
   thermometer.add_delay(step);
 }
