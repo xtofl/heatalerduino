@@ -50,6 +50,13 @@ struct Temperature {
 struct Time {
   int64_t ticks;
 };
+
+bool operator<(const Temperature &lhs, const Temperature &rhs) { return lhs.celcius < rhs.celcius; }
+bool operator>(const Temperature &lhs, const Temperature &rhs) { return lhs.celcius > rhs.celcius; }
+bool operator<(const Time &lhs, const Time &rhs) { return lhs.ticks < rhs.ticks; }
+bool operator>(const Time &lhs, const Time &rhs) { return lhs.ticks > rhs.ticks; }
+
+
 constexpr Time one_second  = {1000};
 constexpr Time operator-(const Time lhs, const Time other) { return {lhs.ticks - other.ticks}; }
 constexpr float operator/(const Time lhs, const Time other) { return (float)lhs.ticks/other.ticks; }
@@ -69,10 +76,23 @@ struct TemperatureSample : public Sample<Time, Temperature> {
   Temperature temperature() const { return y; }
 };
 
+template<typename T>
+struct BoundingBox {
+  T top_left;
+  T bottom_right;
+  void stretch_to(T t) {
+    if (t.x < top_left.x) top_left.x = t.x;
+    if (t.x > bottom_right.x) bottom_right.x = t.x;
+    if (t.y > top_left.y) top_left.y = t.y;
+    if (t.y < bottom_right.y) bottom_right.y = t.y;
+  }
+};
+
 template<size_t N, class T>
 class History {
 
   T buffer[N];
+  BoundingBox<T> bounding_box_;
 
 public:
   constexpr static size_t Size = N;
@@ -87,8 +107,15 @@ public:
     buffer[next] = t;
     current = next;
     if (count < Size) ++count;
+    if (count == 1) {
+      bounding_box_ = {t, t};
+    } else {
+      bounding_box_.stretch_to(t);
+    }
   }
-
+  const BoundingBox<T> bounding_box() const {
+    return bounding_box_;
+  }
   size_t wrap(int index) const {
     if(index < 0) {
       return index + Size;
@@ -174,29 +201,33 @@ public:
       }, 0.0) / Hist::Size
     };
     lcd.clear();
+
     setCursor(Row{0});
     const auto current = history.most_recent().temperature();
     stream(current);
-      if (current.celcius > avg.celcius + 0.2) {
-        stream(">");
-      }
-      else if (current.celcius < avg.celcius - 0.2) {
-        stream("<");
-      } else {
-        stream("=");
-      }
-    stream("|");
-    stream(avg);
-    stream("|");
-    setCursor(Row{1});
+    if (current.celcius > avg.celcius + 0.2) {
+      stream(">");
+    }
+    else if (current.celcius < avg.celcius - 0.2) {
+      stream("<");
+    } else {
+      stream("=");
+    }
 
+    stream(avg);
+    stream("/");
     auto t0 = history.oldest().x;
     auto t1 = history.most_recent().x;
-    stream(static_cast<float>(minutes(t1-t0))) ;
-    stream('\'');
+    stream(static_cast<int>(minutes(t1-t0))) ;
+    stream("\'");
 
-    // stream(" ~");
-    // stream(range);
+    setCursor(Row{1});
+    stream("[");
+    lcd.print(history.bounding_box().bottom_right.temperature().celcius, 1);
+    stream(";");
+    lcd.print(history.bounding_box().top_left.temperature().celcius, 1);
+    stream("]");
+
     return time;
   }
 };
