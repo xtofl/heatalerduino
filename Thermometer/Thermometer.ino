@@ -1,47 +1,6 @@
-/*
-  LiquidCrystal Library - display() and noDisplay()
-
- Demonstrates the use a 16x2 LCD display.  The LiquidCrystal
- library works with all LCD displays that are compatible with the
- Hitachi HD44780 driver. There are many of them out there, and you
- can usually tell them by the 16-pin interface.
-
- This sketch prints "Hello World!" to the LCD and uses the
- display() and noDisplay() functions to turn on and off
- the display.
-
- The circuit:
- * LCD RS pin to digital pin 12
- * LCD Enable pin to digital pin 11
- * LCD D4 pin to digital pin 5
- * LCD D5 pin to digital pin 4
- * LCD D6 pin to digital pin 3
- * LCD D7 pin to digital pin 2
- * LCD R/W pin to ground
- * 10K resistor:
- * ends to +5V and ground
- * wiper to LCD VO pin (pin 3)
-
- Library originally added 18 Apr 2008
- by David A. Mellis
- library modified 5 Jul 2009
- by Limor Fried (http://www.ladyada.net)
- example added 9 Jul 2009
- by Tom Igoe
- modified 22 Nov 2010
- by Tom Igoe
- modified 7 Nov 2016
- by Arturo Guadalupi
-
- This example code is in the public domain.
-
- http://www.arduino.cc/en/Tutorial/LiquidCrystalDisplay
-
-*/
-
-// include the library code:
 #include <LiquidCrystal.h>
 #include <Arduino.h>
+
 
 struct Temperature {
   float celcius;
@@ -58,6 +17,7 @@ bool operator>(const Time &lhs, const Time &rhs) { return lhs.ticks > rhs.ticks;
 
 
 constexpr Time one_second  = {1000};
+constexpr Time one_millisecond  = {1};
 constexpr Time operator-(const Time lhs, const Time other) { return {lhs.ticks - other.ticks}; }
 constexpr float operator/(const Time lhs, const Time other) { return (float)lhs.ticks/other.ticks; }
 constexpr Time operator*(const Time lhs, const float f) { return Time{static_cast<float>(lhs.ticks*f)}; }
@@ -302,14 +262,63 @@ public:
 
 Thermometer thermometer;
 
+constexpr auto step = one_second * 10;
+
+struct Frequency {
+  uint64_t per_second;
+};
+
+template<typename T> constexpr uint64_t MaxTimerTicks(){ return (1ull << (sizeof(T) * 8));}
+static_assert(MaxTimerTicks<uint8_t>() == 256);
+static_assert(MaxTimerTicks<uint16_t>() == 65536u);
+
+struct PreScaler {
+  int divider;
+  uint8_t code;
+};
+namespace atmega326 {
+  constexpr const Frequency FREQ{16000000};
+  constexpr const PreScaler prescalers[]  = {
+    {1024, 0b101},
+    {256, 0b100},
+    {64, 0b011},
+    {8, 0b010},
+    {1, 0b001}
+  };
+}
+
+template<typename CounterType, size_t N>
+constexpr auto prescaler(const Time interval, const Frequency cpu, const PreScaler (&prescalers)[N]) {
+  for(auto prescaler: prescalers) {
+    const auto scaled_frequency = Frequency{cpu.per_second / prescaler};
+    const auto time_to_fill_counter = MaxTimerTicks<CounterType>() / scaled_frequency.per_second;
+    if (interval/one_second < time_to_fill_counter) {
+      return prescaler;
+    }
+  }
+  return 0;
+}
+
+
+static_assert(is_equal<int, 10, 10>);
+
+// cf https://www.robotshop.com/community/forum/t/arduino-101-timers-and-interrupts/13072
+static_assert(is_equal<int, prescaler<uint16_t>(Time{500}, atmega326::FREQ, atmega326::prescalers).divider, 256>);
+
+auto every(Time step, auto callback){
+
+}
+
 void setup() {
   //auto current_temp = thermistor.read_temp();
   //for(int i = 0; i != 50; ++i) history.append(TemperatureSample{{current_temp}, {0}});
+  every(step, [&](void*){
+    thermometer.update_temperature();
+    thermometer.add_delay(step);
+  });
+
 }
 
 void loop() {
-  thermometer.update_temperature();
-  constexpr auto step = one_second * 10;
   delay(step.ticks);
-  thermometer.add_delay(step);
 }
